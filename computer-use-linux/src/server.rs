@@ -12,7 +12,7 @@ use crate::remote_desktop::{
 use crate::screenshot::{capture_screenshot, ScreenshotCapture};
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
-    window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
+    window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget, COSMIC_WAYLAND_BACKEND,
     GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND, HYPRLAND_BACKEND, KWIN_BACKEND,
 };
 use anyhow::Result;
@@ -1783,6 +1783,8 @@ async fn window_list_output() -> ListWindowsOutput {
             let backend = window_backend(windows.iter());
             let note = if backend == GNOME_SHELL_EXTENSION_BACKEND {
                 "Window list came from the Codex GNOME Shell extension. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
+            } else if backend == COSMIC_WAYLAND_BACKEND {
+                "Window list came from the COSMIC Wayland helper. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
             } else if backend == KWIN_BACKEND {
                 "Window list came from KWin/Plasma DBus scripting. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
             } else if backend == HYPRLAND_BACKEND {
