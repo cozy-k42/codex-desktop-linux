@@ -1,0 +1,7 @@
+{
+  "nativeModuleBuildTools": {
+    "@electron/rebuild": "4.0.4",
+    "node-abi": "4.31.0"
+  },
+  "minimumBetterSqlite3ForElectron41": "12.9.0"
+}

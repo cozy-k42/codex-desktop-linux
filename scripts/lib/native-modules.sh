@@ -200,6 +200,15 @@ build_native_modules() {
     bs3_ver=$(node -p "require('$app_extracted/node_modules/better-sqlite3/package.json').version" 2>/dev/null || echo "")
     npty_ver=$(node -p "require('$app_extracted/node_modules/node-pty/package.json').version" 2>/dev/null || echo "")
 
+    if [ -n "${CODEX_NATIVE_MODULES_SOURCE:-}" ]; then
+        if [ -z "$bs3_ver" ]; then
+            bs3_ver=$(node -p "require('${CODEX_NATIVE_MODULES_SOURCE}/better-sqlite3/package.json').version" 2>/dev/null || echo "")
+        fi
+        if [ -z "$npty_ver" ]; then
+            npty_ver=$(node -p "require('${CODEX_NATIVE_MODULES_SOURCE}/node-pty/package.json').version" 2>/dev/null || echo "")
+        fi
+    fi
+
     [ -n "$bs3_ver" ] || error "Could not detect better-sqlite3 version"
     [ -n "$npty_ver" ] || error "Could not detect node-pty version"
 
@@ -285,6 +294,15 @@ install_native_modules_from_source() {
 
 # ---- Download Linux Electron ----
 download_electron() {
+    if [ "${CODEX_ELECTRON_RUNTIME_STRATEGY:-bundled}" = "baseapp" ]; then
+        local baseapp_bin="${CODEX_ELECTRON_BASEAPP_BIN:-/app/bin/electron}"
+        info "Using Electron BaseApp runtime: $baseapp_bin"
+        mkdir -p "$INSTALL_DIR"
+        ln -sfn "$baseapp_bin" "$INSTALL_DIR/electron"
+        info "Electron ready"
+        return 0
+    fi
+
     info "Downloading Electron v${ELECTRON_VERSION} for Linux..."
 
     local electron_arch
