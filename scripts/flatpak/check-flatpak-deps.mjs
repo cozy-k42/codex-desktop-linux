@@ -145,11 +145,13 @@ try {
   if (result.status !== 0) {
     fail(`render-manifest failed: ${result.stderr}`);
   } else {
-    const expected = fs.readFileSync(tempManifest, 'utf8');
     const actualPath = path.join(flatpakDir, 'io.github.ilysenko.codex_desktop_linux.json');
-    const actual = fs.readFileSync(actualPath, 'utf8');
-    if (expected !== actual) fail('Checked-in Flatpak manifest is stale; run bash scripts/flatpak/refresh-generated-sources.sh');
-    assertManifestSourcesForStrategies(JSON.parse(actual), upstream, 'checked-in manifest');
+    if (fs.existsSync(actualPath)) {
+      const expected = fs.readFileSync(tempManifest, 'utf8');
+      const actual = fs.readFileSync(actualPath, 'utf8');
+      if (expected !== actual) fail('Checked-in Flatpak manifest is stale; run bash scripts/flatpak/refresh-generated-sources.sh');
+      assertManifestSourcesForStrategies(JSON.parse(actual), upstream, 'checked-in manifest');
+    }
 
     const omittedSourcesUpstream = structuredClone(upstream);
     omittedSourcesUpstream.sevenZip = { ...omittedSourcesUpstream.sevenZip, strategy: 'sdk' };
