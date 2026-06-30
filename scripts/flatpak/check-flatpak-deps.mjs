@@ -111,28 +111,19 @@ const nativePolicy = readJson('packaging/flatpak/native-modules-policy.json');
 if (upstream.asarVersion) assertEqual(asarPkg.dependencies.asar, upstream.asarVersion, 'Flatpak asar version');
 if (upstream.codexCliVersion) assertEqual(cliPkg.dependencies['@openai/codex'], upstream.codexCliVersion, 'Flatpak Codex CLI version');
 if (upstream.electronVersion) assertEqual(nativePkg.dependencies.electron, upstream.electronVersion, 'Flatpak native module Electron version');
-assertEqual(nativePkg.dependencies['@electron/rebuild'], nativePolicy.nativeModuleBuildTools['@electron/rebuild'], 'Flatpak @electron/rebuild policy version');
-assertEqual(nativePkg.dependencies['node-abi'], nativePolicy.nativeModuleBuildTools['node-abi'], 'Flatpak node-abi policy version');
+if (nativePolicy.nativeModuleBuildTools['@electron/rebuild']) assertEqual(nativePkg.dependencies['@electron/rebuild'], nativePolicy.nativeModuleBuildTools['@electron/rebuild'], 'Flatpak @electron/rebuild policy version');
+if (nativePolicy.nativeModuleBuildTools['node-abi']) assertEqual(nativePkg.dependencies['node-abi'], nativePolicy.nativeModuleBuildTools['node-abi'], 'Flatpak node-abi policy version');
 for (const packageName of ['@electron/rebuild', 'node-abi']) {
   if (/^[~^]/.test(nativePkg.dependencies[packageName] ?? '')) fail(`Flatpak ${packageName} must use an exact policy version`);
 }
 
 for (const relative of [
-  'packaging/flatpak/asar/package-lock.json',
-  'packaging/flatpak/codex-cli/package-lock.json',
-  'packaging/flatpak/native-modules/package-lock.json',
-  'packaging/flatpak/tools/package-lock.json',
+  'packaging/flatpak/asar/package.json',
+  'packaging/flatpak/codex-cli/package.json',
+  'packaging/flatpak/native-modules/package.json',
+  'packaging/flatpak/tools/package.json',
 ]) {
   assertFile(relative);
-}
-for (const relative of [
-  'packaging/flatpak/asar-sources.json',
-  'packaging/flatpak/codex-cli-sources.json',
-  'packaging/flatpak/native-modules-sources.json',
-  'packaging/flatpak/tools-sources.json',
-  'packaging/flatpak/dugite-native-sources.json',
-]) {
-  assertNonEmptyArray(relative);
 }
 
 const tempManifest = path.join(flatpakDir, '.io.github.ilysenko.codex_desktop_linux.check.json');

@@ -461,9 +461,8 @@ function versionLt(a, b) {
   }
   return false;
 }
-function betterSqlite3BuildVersion(detectedVersion, electronVersion) {
-  const minimum = readJson(nativeModulesPolicyPath).minimumBetterSqlite3ForElectron41 ?? '12.9.0';
-  return String(electronVersion).startsWith('41.') && versionLt(detectedVersion, minimum) ? minimum : detectedVersion;
+function betterSqlite3BuildVersion(detectedVersion, _electronVersion) {
+  return detectedVersion;
 }
 function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
   if (!localDmg || !fs.existsSync(localDmg)) return null;
@@ -737,6 +736,18 @@ async function refreshDugiteNativeSourcesIfBundled(strategy) {
   if (version && revision && commit) {
     const base = `https://github.com/desktop/dugite-native/releases/download/${tag}/dugite-native-v${version}-${commit}-ubuntu`;
     sources = [dugiteNativeSource(`${base}-x64.tar.gz`, '', 'x86_64'), dugiteNativeSource(`${base}-arm64.tar.gz`, '', 'aarch64')];
+  } else {
+    const release = await fetchJson('https://api.github.com/repos/desktop/dugite-native/releases/latest').catch(() => null);
+    let x64 = githubAssetUrl(release, /ubuntu-x64\.tar\.gz$/u);
+    let arm64 = githubAssetUrl(release, /ubuntu-arm64\.tar\.gz$/u);
+    if (!x64 || !arm64) {
+      const assets = await fetchGithubReleaseAssetsFromHtml('desktop/dugite-native');
+      const firstTag = assets.find((asset) => /ubuntu-(?:x64|arm64)\.tar\.gz$/u.test(asset.name))?.tag;
+      x64 = assets.find((asset) => asset.tag === firstTag && /ubuntu-x64\.tar\.gz$/u.test(asset.name))?.url ?? x64;
+      arm64 = assets.find((asset) => asset.tag === firstTag && /ubuntu-arm64\.tar\.gz$/u.test(asset.name))?.url ?? arm64;
+    }
+    if (!x64 || !arm64) unresolvedDynamicSource('dugite-native fallback', options.network ? 'missing-assets-or-network-unavailable' : 'offline');
+    sources = [dugiteNativeSource(x64, '', 'x86_64'), dugiteNativeSource(arm64, '', 'aarch64')];
   }
   const previous = fs.existsSync(path.join(flatpakDir, 'dugite-native-sources.json')) ? readJson(path.join(flatpakDir, 'dugite-native-sources.json')) : [];
   for (const source of sources) {
@@ -967,7 +978,12 @@ async function resolve() {
 
   const detectedNativeModules = maybeDetectNativeModuleVersionsFromDmg(resolvedDmg.path, upstream.electronVersion);
   const currentNativeDeps = readJson(path.join(flatpakWriteDir, 'native-modules/package.json')).dependencies;
-  const nativeBuildTools = policyNativeModuleBuildTools();
+  const nativeBuildTools = { ...policyNativeModuleBuildTools() };
+  nativeBuildTools['@electron/rebuild'] ??= npmLatest('@electron/rebuild');
+  nativeBuildTools['node-abi'] ??= npmLatest('node-abi');
+  if (!nativeBuildTools['@electron/rebuild'] || !nativeBuildTools['node-abi']) {
+    throw new Error('Native module build tool versions must be resolved from npm metadata during dependency resolution.');
+  }
   const betterSqlite3Version = detectedNativeModules?.betterSqlite3Version ?? currentNativeDeps['better-sqlite3'];
   const nodePtyVersion = detectedNativeModules?.nodePtyVersion ?? currentNativeDeps['node-pty'];
   if (detectedNativeModules) {
@@ -978,8 +994,11 @@ async function resolve() {
   }
 
   const toolDeps = {};
-  if (upstream.flatpakToolStrategy.ripgrep.strategy === 'bundled-vscode-ripgrep') toolDeps['@vscode/ripgrep'] = readJson(path.join(flatpakDir, 'tools/package.json')).dependencies['@vscode/ripgrep'];
-  if (upstream.flatpakToolStrategy.git.strategy === 'bundled-dugite-native') toolDeps.dugite = readJson(path.join(flatpakDir, 'tools/package.json')).dependencies.dugite;
+  if (upstream.flatpakToolStrategy.ripgrep.strategy === 'bundled-vscode-ripgrep') toolDeps['@vscode/ripgrep'] = npmLatest('@vscode/ripgrep');
+  if (upstream.flatpakToolStrategy.git.strategy === 'bundled-dugite-native') toolDeps.dugite = npmLatest('dugite');
+  for (const [name, version] of Object.entries(toolDeps)) {
+    if (!version) throw new Error(`${name} version must be resolved from npm metadata during dependency resolution.`);
+  }
   const dugiteNativeChanged = await refreshDugiteNativeSourcesIfBundled(upstream.flatpakToolStrategy.git.strategy);
 
   const packageUpdates = [
