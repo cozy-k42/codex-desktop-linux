@@ -411,8 +411,27 @@ function extractAsarFile(appDir, tmp, asarRelativePath) {
   }
   return null;
 }
+
+function extractAsarTree(appDir, tmp) {
+  const asarPath = path.join(appDir, 'Contents', 'Resources', 'app.asar');
+  if (!fs.existsSync(asarPath)) return null;
+  const out = path.join(tmp, 'app-asar-extracted');
+  const marker = path.join(out, 'package.json');
+  if (fs.existsSync(marker)) return out;
+  fs.rmSync(out, { recursive: true, force: true });
+  for (const cmd of [['asar', ['extract', asarPath, out]], ['npx', ['--yes', 'asar', 'extract', asarPath, out]]]) {
+    const res = run(cmd[0], cmd[1], { capture: true, optional: true });
+    if (res && fs.existsSync(marker)) return out;
+    fs.rmSync(out, { recursive: true, force: true });
+  }
+  return null;
+}
 function extractAsarPackageJson(appDir, tmp) {
-  return extractAsarFile(appDir, tmp, 'package.json');
+  const packageFile = extractAsarFile(appDir, tmp, 'package.json');
+  if (packageFile) return packageFile;
+  const tree = extractAsarTree(appDir, tmp);
+  const treePackage = tree ? path.join(tree, 'package.json') : null;
+  return treePackage && fs.existsSync(treePackage) ? treePackage : null;
 }
 function readPlistAppVersion(appDir) {
   const plist = path.join(appDir, 'Contents', 'Info.plist');
@@ -445,7 +464,10 @@ function readModuleVersionFromExtractedApp(appDir, tmp, moduleName) {
     if (fs.existsSync(candidate)) return readJson(candidate).version ?? null;
   }
   const asarPackage = extractAsarFile(appDir, tmp, `node_modules/${moduleName}/package.json`);
-  return asarPackage ? (readJson(asarPackage).version ?? null) : null;
+  if (asarPackage) return readJson(asarPackage).version ?? null;
+  const asarTree = extractAsarTree(appDir, tmp);
+  const packageFromTree = asarTree ? path.join(asarTree, 'node_modules', moduleName, 'package.json') : null;
+  return packageFromTree && fs.existsSync(packageFromTree) ? (readJson(packageFromTree).version ?? null) : null;
 }
 function versionLt(a, b) {
   const pa = String(a).split(/[.-]/).map((v) => /^\d+$/.test(v) ? Number(v) : v);
@@ -462,7 +484,7 @@ function versionLt(a, b) {
 function betterSqlite3BuildVersion(detectedVersion, _electronVersion) {
   return detectedVersion;
 }
-function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
+export function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
   if (!localDmg || !fs.existsSync(localDmg)) return null;
   if (!run('sh', ['-c', 'command -v 7z >/dev/null 2>&1'], { optional: true, capture: true })) return null;
   const tmp = fs.mkdtempSync(path.join('/tmp', 'codex-flatpak-native-dmg-'));
