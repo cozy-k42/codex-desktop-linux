@@ -24,7 +24,8 @@ if os.path.exists(lock_path):
     if version:
         print(version)
         raise SystemExit
-print(json.load(open(sys.argv[1], encoding="utf-8"))["codexVersion"])
+upstream = json.load(open(sys.argv[1], encoding="utf-8"))
+print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "0.0.1+unresolved")
 PY
 )
 RUNTIME_VERSION=$(python3 - "$UPSTREAM_JSON" <<'PY'
@@ -216,7 +217,8 @@ if os.path.exists(lock_path):
     if version:
         print(version)
         raise SystemExit
-print(json.load(open(sys.argv[1], encoding="utf-8"))["codexVersion"])
+upstream = json.load(open(sys.argv[1], encoding="utf-8"))
+print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "0.0.1+unresolved")
 PY
 )
     if [ "$BUNDLE_PATH_WAS_SET" = 0 ]; then
