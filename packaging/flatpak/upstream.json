@@ -3,8 +3,7 @@
   "displayName": "Codex Desktop Linux",
   "runtimeVersion": "25.08",
   "codexDmg": {
-    "url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg",
-    "size": 525052314
+    "url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
   },
   "flatpakToolStrategy": {
     "buildPython": {

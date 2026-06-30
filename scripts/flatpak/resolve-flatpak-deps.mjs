@@ -262,36 +262,14 @@ function generatedAppVersion(value) {
   if (/^0+(?:\.0+)*(?:[-+]0+)?$/.test(v)) return null;
   return v;
 }
-function versionHashSuffix(sha) {
-  return String(sha ?? '').replace(/[^0-9a-f]/giu, '').toLowerCase().slice(0, 8);
-}
-function dmgMetadataVersionBase({ lastModified, size } = {}) {
-  const parsed = lastModified ? new Date(lastModified) : null;
-  if (parsed && !Number.isNaN(parsed.valueOf())) {
-    const year = parsed.getUTCFullYear();
-    const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(parsed.getUTCDate()).padStart(2, '0');
-    const hour = String(parsed.getUTCHours()).padStart(2, '0');
-    const minute = String(parsed.getUTCMinutes()).padStart(2, '0');
-    return `${year}.${month}.${day}.${hour}${minute}`;
-  }
-  const numericSize = Number(size);
-  return Number.isFinite(numericSize) && numericSize > 0 ? String(Math.trunc(numericSize)) : null;
-}
-export function resolveCodexVersion({ appVersion, dmgSha256, dmgLastModified, dmgSize, packageVersion, flatpakAppVersion, pinnedVersion } = {}) {
+export function resolveCodexVersion({ appVersion, packageVersion, flatpakAppVersion } = {}) {
   const flatpakOverride = String(flatpakAppVersion ?? '').trim();
   if (flatpakOverride) return flatpakOverride;
   const packageOverride = generatedAppVersion(packageVersion);
   if (packageOverride) return packageOverride;
   const app = generatedAppVersion(appVersion);
   if (app) return app;
-  const pinned = generatedAppVersion(pinnedVersion);
-  const suffix = versionHashSuffix(dmgSha256);
-  if (suffix && pinned) return `${pinned}+dmg.${suffix}`;
-  if (pinned) return pinned;
-  const dmgBase = dmgMetadataVersionBase({ lastModified: dmgLastModified, size: dmgSize });
-  if (suffix && dmgBase) return `${dmgBase}+dmg.${suffix}`;
-  throw new Error('Flatpak app version must be resolved from upstream app metadata, upstream DMG metadata, or FLATPAK_APP_VERSION/PACKAGE_VERSION; refusing hardcoded fallback version.');
+  throw new Error('Flatpak app version must be resolved from upstream app metadata or FLATPAK_APP_VERSION/PACKAGE_VERSION.');
 }
 async function fetchHeaders(url) {
   const response = await fetch(url, { method: 'HEAD' });
@@ -493,17 +471,8 @@ function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
     const appDir = findFirstAppDir(tmp);
     if (!result && !appDir) return null;
     if (!appDir) return null;
-    const rootPackageFile = extractAsarPackageJson(appDir, tmp);
-    const rootPackage = rootPackageFile ? readJson(rootPackageFile) : {};
-    const declaredVersion = (name) => rootPackage.dependencies?.[name]
-      ?? rootPackage.optionalDependencies?.[name]
-      ?? rootPackage.devDependencies?.[name]
-      ?? null;
-    const normalizeDeclared = (value) => String(value ?? '').replace(/^[~^=<>\s]+/u, '').trim() || null;
-    const betterSqlite3Detected = readModuleVersionFromExtractedApp(appDir, tmp, 'better-sqlite3')
-      ?? normalizeDeclared(declaredVersion('better-sqlite3'));
-    const nodePtyVersion = readModuleVersionFromExtractedApp(appDir, tmp, 'node-pty')
-      ?? normalizeDeclared(declaredVersion('node-pty'));
+    const betterSqlite3Detected = readModuleVersionFromExtractedApp(appDir, tmp, 'better-sqlite3');
+    const nodePtyVersion = readModuleVersionFromExtractedApp(appDir, tmp, 'node-pty');
     if (!betterSqlite3Detected || !nodePtyVersion) return null;
     return {
       betterSqlite3Detected,
@@ -567,36 +536,15 @@ function githubAssetUrl(release, pattern) {
   return release?.assets?.find((asset) => pattern.test(asset.name))?.browser_download_url ?? null;
 }
 
-async function fetchGithubReleaseAssetsFromHtml(repo, tag = '') {
-  const url = tag ? `https://github.com/${repo}/releases/expanded_assets/${tag}` : `https://github.com/${repo}/releases`;
-  const html = await fetchText(url).catch(() => null);
-  if (!html) return [];
-  const escapedRepo = repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`/${escapedRepo}/releases/download/([^/]+)/([^"'<>\\s]+)`, 'gu');
-  const assets = [];
-  for (const match of html.matchAll(pattern)) {
-    assets.push({ tag: match[1], name: decodeURIComponent(match[2]), url: `https://github.com/${repo}/releases/download/${match[1]}/${match[2]}` });
-  }
-  return assets;
-}
 async function resolveLatestSevenZip(previous) {
   const release = await fetchJson('https://api.github.com/repos/ip7z/7zip/releases/latest').catch(() => null);
-  let version = release?.tag_name?.replace(/^v/i, '') ?? '';
-  let x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
-  let arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
-  let source = 'github-latest-release-api';
-  if (!version || !x64 || !arm64) {
-    const assets = await fetchGithubReleaseAssetsFromHtml('ip7z/7zip');
-    const firstTag = assets.find((asset) => /linux-(?:x64|arm64)\.tar\.xz$/u.test(asset.name))?.tag;
-    version = firstTag?.replace(/^v/i, '') ?? version;
-    x64 = assets.find((asset) => asset.tag === firstTag && /linux-x64\.tar\.xz$/u.test(asset.name))?.url ?? x64;
-    arm64 = assets.find((asset) => asset.tag === firstTag && /linux-arm64\.tar\.xz$/u.test(asset.name))?.url ?? arm64;
-    source = 'github-releases-html';
-  }
-  if (!version) unresolvedDynamicSource('7-Zip fallback', options.network ? 'network-unavailable' : 'offline');
-  if (!x64 || !arm64) unresolvedDynamicSource('7-Zip fallback', 'missing-assets');
+  const version = release?.tag_name?.replace(/^v/i, '') ?? '';
+  const x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
+  const arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
+  if (!version) unresolvedDynamicSource('7-Zip', options.network ? 'network-unavailable' : 'offline');
+  if (!x64 || !arm64) unresolvedDynamicSource('7-Zip', 'missing-assets');
   const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
-  return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source };
+  return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-release-api' };
 }
 async function resolveLatestPythonStandalone(previous) {
   const x64Pattern = /cpython-3\.10\.[^/]+x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u;
@@ -613,16 +561,7 @@ async function resolveLatestPythonStandalone(previous) {
       return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-cpython-3.10-release-api' };
     }
   }
-  const assets = await fetchGithubReleaseAssetsFromHtml('astral-sh/python-build-standalone');
-  for (const asset of assets) {
-    if (!x64Pattern.test(asset.name)) continue;
-    const arm64 = assets.find((candidate) => candidate.tag === asset.tag && arm64Pattern.test(candidate.name));
-    if (!arm64) continue;
-    const version = asset.name.replace(/^cpython-/u, '').replace(/-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u, '');
-    const next = { version, x86_64: { url: asset.url, sha256: '' }, aarch64: { url: arm64.url, sha256: '' } };
-    return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: asset.url }, aarch64: { url: arm64.url } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-releases-html-cpython-3.10' };
-  }
-  unresolvedDynamicSource('Python standalone fallback', options.network ? 'no-compatible-assets-or-network-unavailable' : 'offline');
+  unresolvedDynamicSource('Python standalone', options.network ? 'no-compatible-assets-or-network-unavailable' : 'offline');
 }
 async function refreshBinaryFallbacks(upstream, previousUpstream, needs) {
   const skipped = (source) => ({ value: null, changed: false, source });
@@ -769,13 +708,7 @@ async function refreshDugiteNativeSourcesIfBundled(strategy) {
     const release = await fetchJson('https://api.github.com/repos/desktop/dugite-native/releases/latest').catch(() => null);
     let x64 = githubAssetUrl(release, /ubuntu-x64\.tar\.gz$/u);
     let arm64 = githubAssetUrl(release, /ubuntu-arm64\.tar\.gz$/u);
-    if (!x64 || !arm64) {
-      const assets = await fetchGithubReleaseAssetsFromHtml('desktop/dugite-native');
-      const firstTag = assets.find((asset) => /ubuntu-(?:x64|arm64)\.tar\.gz$/u.test(asset.name))?.tag;
-      x64 = assets.find((asset) => asset.tag === firstTag && /ubuntu-x64\.tar\.gz$/u.test(asset.name))?.url ?? x64;
-      arm64 = assets.find((asset) => asset.tag === firstTag && /ubuntu-arm64\.tar\.gz$/u.test(asset.name))?.url ?? arm64;
-    }
-    if (!x64 || !arm64) unresolvedDynamicSource('dugite-native fallback', options.network ? 'missing-assets-or-network-unavailable' : 'offline');
+    if (!x64 || !arm64) unresolvedDynamicSource('dugite-native', options.network ? 'missing-assets-or-network-unavailable' : 'offline');
     sources = [dugiteNativeSource(x64, '', 'x86_64'), dugiteNativeSource(arm64, '', 'aarch64')];
   }
   const previous = fs.existsSync(path.join(flatpakDir, 'dugite-native-sources.json')) ? readJson(path.join(flatpakDir, 'dugite-native-sources.json')) : [];
@@ -877,7 +810,6 @@ async function resolve() {
   upstream.electronZip.x86_64 ??= {};
   upstream.electronZip.aarch64 ??= {};
   upstream.electronHeaders ??= {};
-  const pinnedCodexVersion = upstream.codexVersion;
   const report = [];
 
   const dmgUrl = process.env.CODEX_UPSTREAM_DMG_URL || upstream.codexDmg.url;
@@ -908,19 +840,12 @@ async function resolve() {
     upstream.codexDmg.sha256 = sha;
     upstream.codexDmg.size = stat.size;
     const detectedAppVersion = maybeDetectAppVersionFromDmg(resolvedDmg.path);
-    const usableAppVersion = generatedAppVersion(detectedAppVersion);
     upstream.codexVersion = resolveCodexVersion({
       appVersion: detectedAppVersion,
-      dmgSha256: sha,
-      dmgLastModified: upstream.codexDmg?.lastModified,
-      dmgSize: upstream.codexDmg?.size,
       packageVersion: process.env.PACKAGE_VERSION,
       flatpakAppVersion: process.env.FLATPAK_APP_VERSION,
-      pinnedVersion: pinnedCodexVersion,
     });
-    report.push(usableAppVersion && upstream.codexVersion === usableAppVersion
-      ? `resolved Codex version ${upstream.codexVersion} from upstream app metadata`
-      : `resolved Codex version ${upstream.codexVersion} from pinned metadata and DMG hash`);
+    report.push(`resolved Codex version ${upstream.codexVersion} from upstream app metadata`);
     const detectedElectron = maybeDetectElectronFromDmg(resolvedDmg.path);
     if (detectedElectron) {
       upstream.electronVersion = detectedElectron;
@@ -930,12 +855,8 @@ async function resolve() {
   } else {
     upstream.codexVersion = resolveCodexVersion({
       appVersion: null,
-      dmgSha256: upstream.codexDmg?.sha256,
-      dmgLastModified: upstream.codexDmg?.lastModified,
-      dmgSize: upstream.codexDmg?.size,
       packageVersion: process.env.PACKAGE_VERSION,
       flatpakAppVersion: process.env.FLATPAK_APP_VERSION,
-      pinnedVersion: pinnedCodexVersion,
     });
   }
 
@@ -943,9 +864,9 @@ async function resolve() {
     if (headers) {
       report.push('checked upstream DMG headers; no DMG downloaded');
     } else if (!options.network) {
-      report.push('offline mode; kept pinned DMG metadata');
+      report.push('offline mode; no DMG metadata was resolved');
     } else {
-      report.push('could not check upstream DMG headers; kept pinned DMG metadata');
+      report.push('could not check upstream DMG headers; no DMG metadata was resolved');
     }
   }
 

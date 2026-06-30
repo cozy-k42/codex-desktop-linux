@@ -38,8 +38,7 @@ function replaceOnce(file, needle, replacement) {
     return false;
   }
   if (!source.includes(needle)) {
-    console.error(`[WARN] Skipping better-sqlite3 V8 external pointer patch for ${file}; needle not found, source may already be compatible`);
-    return false;
+    throw new Error(`Could not find better-sqlite3 V8 external pointer patch needle in ${file}`);
   }
   fs.writeFileSync(file, source.replace(needle, replacement));
   return true;
