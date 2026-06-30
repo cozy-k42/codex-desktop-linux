@@ -274,9 +274,9 @@ export function resolveCodexVersion({ appVersion, dmgSha256, packageVersion, fla
   if (app) return app;
   const pinned = generatedAppVersion(pinnedVersion);
   const suffix = versionHashSuffix(dmgSha256);
-  if (suffix) return `${pinned ?? '0.0.1'}+dmg.${suffix}`;
+  if (suffix && pinned) return `${pinned}+dmg.${suffix}`;
   if (pinned) return pinned;
-  return '0.0.1+unresolved';
+  throw new Error('Flatpak app version must be resolved from upstream app metadata or FLATPAK_APP_VERSION/PACKAGE_VERSION; refusing hardcoded fallback version.');
 }
 async function fetchHeaders(url) {
   const response = await fetch(url, { method: 'HEAD' });

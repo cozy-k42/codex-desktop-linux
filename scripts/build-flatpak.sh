@@ -25,7 +25,7 @@ if os.path.exists(lock_path):
         print(version)
         raise SystemExit
 upstream = json.load(open(sys.argv[1], encoding="utf-8"))
-print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "0.0.1+unresolved")
+print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "")
 PY
 )
 RUNTIME_VERSION=$(python3 - "$UPSTREAM_JSON" <<'PY'
@@ -41,7 +41,11 @@ if [ -n "${FLATPAK_BUNDLE_PATH:-}" ]; then
     BUNDLE_PATH="$FLATPAK_BUNDLE_PATH"
     BUNDLE_PATH_WAS_SET=1
 else
-    BUNDLE_PATH="$REPO_DIR/dist/${APP_ID}-${APP_VERSION}.flatpak"
+    if [ -n "$APP_VERSION" ]; then
+        BUNDLE_PATH="$REPO_DIR/dist/${APP_ID}-${APP_VERSION}.flatpak"
+    else
+        BUNDLE_PATH="$REPO_DIR/dist/${APP_ID}.flatpak"
+    fi
 fi
 MANIFEST_PATH=${FLATPAK_MANIFEST_PATH:-$REPO_DIR/dist/flatpak/${APP_ID}.json}
 SOURCE_ARCHIVE=${FLATPAK_SOURCE_ARCHIVE:-$REPO_DIR/dist/flatpak/${APP_ID}-source.tar.gz}
@@ -218,9 +222,13 @@ if os.path.exists(lock_path):
         print(version)
         raise SystemExit
 upstream = json.load(open(sys.argv[1], encoding="utf-8"))
-print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "0.0.1+unresolved")
+print(os.environ.get("FLATPAK_APP_VERSION") or os.environ.get("PACKAGE_VERSION") or upstream.get("codexVersion") or "")
 PY
 )
+    if [ -z "$APP_VERSION" ]; then
+        echo "Flatpak app version was not resolved from upstream metadata or environment" >&2
+        exit 1
+    fi
     if [ "$BUNDLE_PATH_WAS_SET" = 0 ]; then
         BUNDLE_PATH="$REPO_DIR/dist/${APP_ID}-${APP_VERSION}.flatpak"
     fi
