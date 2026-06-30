@@ -316,9 +316,14 @@ main() {
         exit 1
     fi
 
-    resolve_deps
+    # Install the Flatpak runtime/SDK/BaseApp before resolving dependency metadata so
+    # the resolver can probe those refs and omit bundled fallbacks when the runtime
+    # already provides compatible tools.
     if [ "$FLATPAK_MANIFEST_ONLY" != 1 ]; then
         install_deps
+    fi
+    resolve_deps
+    if [ "$FLATPAK_MANIFEST_ONLY" != 1 ]; then
         validate_static_inputs
     fi
     prepare_manifest

@@ -378,7 +378,7 @@ function electronVersionsAbiCompatible(upstreamVersion, baseappVersion) {
   return upstreamMajor != null && baseappMajor != null && upstreamMajor === baseappMajor;
 }
 function requestedElectronStrategy() {
-  const value = (process.env.FLATPAK_ELECTRON_STRATEGY || 'bundled').trim().toLowerCase();
+  const value = (process.env.FLATPAK_ELECTRON_STRATEGY || 'auto').trim().toLowerCase();
   if (!['bundled', 'baseapp', 'auto'].includes(value)) {
     throw new Error(`Unsupported FLATPAK_ELECTRON_STRATEGY=${value}; expected bundled, baseapp, or auto`);
   }
@@ -629,6 +629,14 @@ function probeFlatpakNodeRef(ref) {
   });
   return { ref, tool: 'node+npm', available: Boolean(result), source: 'flatpak-run' };
 }
+function probeFlatpakRuntimeNodeRef(ref) {
+  if (!options.probeFlatpak) return { ref, tool: 'node', available: null, source: 'not-probed' };
+  const result = run('flatpak', ['run', '--command=sh', ref, '-c', 'test -x /usr/bin/node || command -v node >/dev/null 2>&1'], {
+    capture: true,
+    optional: true,
+  });
+  return { ref, tool: 'node', available: Boolean(result), source: 'flatpak-run' };
+}
 function resolveNodeStrategies(upstream) {
   const sdkRef = `org.freedesktop.Sdk//${upstream.runtimeVersion}`;
   const extensionRefs = [
@@ -638,10 +646,15 @@ function resolveNodeStrategies(upstream) {
   ];
   const probes = [probeFlatpakNodeRef(sdkRef), ...extensionRefs.map((ref) => probeFlatpakNodeRef(ref))];
   const availableProbe = probes.find((probe) => probe.available === true) ?? probes[0];
+  const runtimeProbe = probeFlatpakRuntimeNodeRef(`org.electronjs.Electron2.BaseApp//${upstream.runtimeVersion}`);
   return {
     buildNode: {
       strategy: availableProbe?.available === true ? 'sdk' : 'bundled-managed-node',
       probe: availableProbe ? { ...availableProbe, candidates: probes } : null,
+    },
+    runtimeNode: {
+      strategy: runtimeProbe.available === true ? 'runtime-node-contract' : 'bundled-managed-node',
+      probe: runtimeProbe,
     },
   };
 }
@@ -778,8 +791,8 @@ async function resolve() {
   upstream.node = {
     buildStrategy: upstream.flatpakToolStrategy.buildNode.strategy,
     buildProbe: upstream.flatpakToolStrategy.buildNode.probe,
-    runtimeStrategy: upstream.node?.runtimeStrategy ?? 'bundled-managed-node',
-    runtimeProbe: upstream.node?.runtimeProbe ?? null,
+    runtimeStrategy: upstream.flatpakToolStrategy.runtimeNode?.strategy ?? upstream.node?.runtimeStrategy ?? 'bundled-managed-node',
+    runtimeProbe: upstream.flatpakToolStrategy.runtimeNode?.probe ?? upstream.node?.runtimeProbe ?? null,
   };
   report.push(`Node build strategy=${upstream.node.buildStrategy} runtime strategy=${upstream.node.runtimeStrategy}`);
   report.push(`Git strategy=${upstream.flatpakToolStrategy.git.strategy} ripgrep strategy=${upstream.flatpakToolStrategy.ripgrep.strategy}`);
