@@ -487,6 +487,94 @@ function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
   }
 }
 
+
+async function fetchJson(url) {
+  if (!options.network) return null;
+  const response = await fetch(url, { headers: { 'user-agent': 'codex-desktop-linux-flatpak-deps' } });
+  if (!response.ok) throw new Error(`GET ${url} returned ${response.status}`);
+  return response.json();
+}
+async function fetchText(url) {
+  if (!options.network) return null;
+  const response = await fetch(url, { headers: { 'user-agent': 'codex-desktop-linux-flatpak-deps' } });
+  if (!response.ok) throw new Error(`GET ${url} returned ${response.status}`);
+  return response.text();
+}
+function nodeAssetName(version, arch) {
+  return `node-v${version}-linux-${arch}.tar.xz`;
+}
+async function resolveLatestManagedNode(previous) {
+  const forced = process.env.CODEX_FLATPAK_MANAGED_NODE_VERSION?.trim();
+  const index = await fetchJson('https://nodejs.org/dist/index.json').catch(() => null);
+  if (!index) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  const minimum = [22, 22, 0];
+  const versionOk = (version) => {
+    const parts = String(version).replace(/^v/, '').split('.').map((v) => Number(v));
+    for (let i = 0; i < minimum.length; i += 1) {
+      if ((parts[i] ?? 0) > minimum[i]) return true;
+      if ((parts[i] ?? 0) < minimum[i]) return false;
+    }
+    return true;
+  };
+  const selected = forced
+    ? index.find((entry) => entry.version === `v${forced.replace(/^v/, '')}`)
+    : index.find((entry) => entry.lts && versionOk(entry.version));
+  if (!selected) return { value: previous, changed: false, source: forced ? 'pinned-forced-version-unavailable' : 'pinned-no-compatible-lts' };
+  const version = selected.version.replace(/^v/, '');
+  const shasums = await fetchText(`https://nodejs.org/dist/v${version}/SHASUMS256.txt`).catch(() => null);
+  if (!shasums) return { value: previous, changed: false, source: 'pinned-shasums-unavailable' };
+  const shaFor = (asset) => shasums.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).find(([, name]) => name === asset)?.[0] ?? '';
+  const next = {
+    version,
+    x86_64: { url: `https://nodejs.org/dist/v${version}/${nodeAssetName(version, 'x64')}`, sha256: shaFor(nodeAssetName(version, 'x64')) },
+    aarch64: { url: `https://nodejs.org/dist/v${version}/${nodeAssetName(version, 'arm64')}`, sha256: shaFor(nodeAssetName(version, 'arm64')) },
+  };
+  if (!next.x86_64.sha256 || !next.aarch64.sha256) return { value: previous, changed: false, source: 'pinned-missing-arch-shasum' };
+  return { value: next, changed: JSON.stringify(next) !== JSON.stringify(previous), source: forced ? 'env-nodejs-index' : 'nodejs-index-latest-lts' };
+}
+function githubAssetUrl(release, pattern) {
+  return release?.assets?.find((asset) => pattern.test(asset.name))?.browser_download_url ?? null;
+}
+async function resolveLatestSevenZip(previous) {
+  const release = await fetchJson('https://api.github.com/repos/ip7z/7zip/releases/latest').catch(() => null);
+  if (!release?.tag_name) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  const version = release.tag_name.replace(/^v/i, '');
+  const x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
+  const arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
+  if (!x64 || !arm64) return { value: previous, changed: false, source: 'pinned-missing-assets' };
+  const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
+  return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-release' };
+}
+async function resolveLatestPythonStandalone(previous) {
+  const releases = await fetchJson('https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=20').catch(() => null);
+  if (!Array.isArray(releases)) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  for (const release of releases) {
+    const x64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
+    const arm64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+aarch64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
+    if (!x64 || !arm64) continue;
+    const decoded = decodeURIComponent(new URL(x64).pathname.split('/').pop() ?? '');
+    const version = decoded.replace(/^cpython-/u, '').replace(/-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u, '');
+    const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
+    return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-cpython-3.10-release' };
+  }
+  return { value: previous, changed: false, source: 'pinned-no-compatible-assets' };
+}
+async function refreshBinaryFallbacks(upstream, previousUpstream) {
+  const node = await resolveLatestManagedNode(upstream.managedNode);
+  upstream.managedNode = node.value;
+  const python = await resolveLatestPythonStandalone(upstream.pythonStandalone);
+  upstream.pythonStandalone = python.value;
+  const sevenZip = await resolveLatestSevenZip(upstream.sevenZip);
+  upstream.sevenZip = sevenZip.value;
+
+  await refreshPinnedFileSource(upstream.managedNode?.x86_64, 'Node.js x86_64 runtime', previousUpstream.managedNode?.x86_64?.url);
+  await refreshPinnedFileSource(upstream.managedNode?.aarch64, 'Node.js aarch64 runtime', previousUpstream.managedNode?.aarch64?.url);
+  await refreshPinnedFileSource(upstream.pythonStandalone?.x86_64, 'Python standalone x86_64 runtime', previousUpstream.pythonStandalone?.x86_64?.url);
+  await refreshPinnedFileSource(upstream.pythonStandalone?.aarch64, 'Python standalone aarch64 runtime', previousUpstream.pythonStandalone?.aarch64?.url);
+  await refreshPinnedFileSource(upstream.sevenZip?.x86_64, '7-Zip x86_64 build tool', previousUpstream.sevenZip?.x86_64?.url);
+  await refreshPinnedFileSource(upstream.sevenZip?.aarch64, '7-Zip aarch64 build tool', previousUpstream.sevenZip?.aarch64?.url);
+  return { node, python, sevenZip };
+}
 async function refreshPinnedFileSource(source, label, previousUrl) {
   if (!source?.url) return;
   if (!options.downloadBinaries && previousUrl === source.url && source.sha256) return;
@@ -772,6 +860,10 @@ async function resolve() {
   upstream.electronZip.x86_64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-x64.zip`;
   upstream.electronZip.aarch64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-arm64.zip`;
   upstream.electronHeaders.url = `https://artifacts.electronjs.org/headers/dist/v${upstream.electronVersion}/node-v${upstream.electronVersion}-headers.tar.gz`;
+  const fallbackResolution = await refreshBinaryFallbacks(upstream, previousUpstream);
+  report.push(`managed Node fallback ${upstream.managedNode?.version ?? 'unknown'} source=${fallbackResolution.node.source}`);
+  report.push(`Python fallback ${upstream.pythonStandalone?.version ?? 'unknown'} source=${fallbackResolution.python.source}`);
+  report.push(`7-Zip fallback ${upstream.sevenZip?.version ?? 'unknown'} source=${fallbackResolution.sevenZip.source}`);
   await refreshPinnedFileSource(upstream.electronZip.x86_64, 'Electron x86_64 runtime', previousUpstream.electronZip?.x86_64?.url);
   await refreshPinnedFileSource(upstream.electronZip.aarch64, 'Electron aarch64 runtime', previousUpstream.electronZip?.aarch64?.url);
   await refreshPinnedFileSource(upstream.electronHeaders, 'Electron headers', previousUpstream.electronHeaders?.url);
@@ -779,7 +871,7 @@ async function resolve() {
   upstream.electronRuntime = resolveElectronRuntime(upstream);
   report.push(`Electron runtime strategy=${upstream.electronRuntime.strategy} requested=${upstream.electronRuntime.requestedStrategy} upstream=${upstream.electronVersion} baseapp=${upstream.electronRuntime.baseapp.electronVersion ?? 'unknown'} (${upstream.electronRuntime.compatibility})`);
 
-  const cliLatest = process.env.FLATPAK_RESOLVE_NPM_LATEST === '1' ? npmLatest('@openai/codex') : null;
+  const cliLatest = process.env.FLATPAK_RESOLVE_NPM_LATEST === '0' ? null : npmLatest('@openai/codex');
   if (cliLatest) upstream.codexCliVersion = cliLatest;
 
   upstream.flatpakToolStrategy = {
