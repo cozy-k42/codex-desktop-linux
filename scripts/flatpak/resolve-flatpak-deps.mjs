@@ -444,8 +444,13 @@ function maybeDetectAppVersionFromDmg(localDmg) {
   }
 }
 function readModuleVersionFromExtractedApp(appDir, tmp, moduleName) {
-  const extractedPackage = path.join(appDir, 'Contents', 'Resources', 'app', 'node_modules', moduleName, 'package.json');
-  if (fs.existsSync(extractedPackage)) return readJson(extractedPackage).version ?? null;
+  const candidates = [
+    path.join(appDir, 'Contents', 'Resources', 'app', 'node_modules', moduleName, 'package.json'),
+    path.join(appDir, 'Contents', 'Resources', 'app.asar.unpacked', 'node_modules', moduleName, 'package.json'),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return readJson(candidate).version ?? null;
+  }
   const asarPackage = extractAsarFile(appDir, tmp, `node_modules/${moduleName}/package.json`);
   return asarPackage ? (readJson(asarPackage).version ?? null) : null;
 }
@@ -473,8 +478,17 @@ function maybeDetectNativeModuleVersionsFromDmg(localDmg, electronVersion) {
     const appDir = findFirstAppDir(tmp);
     if (!result && !appDir) return null;
     if (!appDir) return null;
-    const betterSqlite3Detected = readModuleVersionFromExtractedApp(appDir, tmp, 'better-sqlite3');
-    const nodePtyVersion = readModuleVersionFromExtractedApp(appDir, tmp, 'node-pty');
+    const rootPackageFile = extractAsarPackageJson(appDir, tmp);
+    const rootPackage = rootPackageFile ? readJson(rootPackageFile) : {};
+    const declaredVersion = (name) => rootPackage.dependencies?.[name]
+      ?? rootPackage.optionalDependencies?.[name]
+      ?? rootPackage.devDependencies?.[name]
+      ?? null;
+    const normalizeDeclared = (value) => String(value ?? '').replace(/^[~^=<>\s]+/u, '').trim() || null;
+    const betterSqlite3Detected = readModuleVersionFromExtractedApp(appDir, tmp, 'better-sqlite3')
+      ?? normalizeDeclared(declaredVersion('better-sqlite3'));
+    const nodePtyVersion = readModuleVersionFromExtractedApp(appDir, tmp, 'node-pty')
+      ?? normalizeDeclared(declaredVersion('node-pty'));
     if (!betterSqlite3Detected || !nodePtyVersion) return null;
     return {
       betterSqlite3Detected,
