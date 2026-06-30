@@ -977,20 +977,20 @@ async function resolve() {
   }
 
   const detectedNativeModules = maybeDetectNativeModuleVersionsFromDmg(resolvedDmg.path, upstream.electronVersion);
-  const currentNativeDeps = readJson(path.join(flatpakWriteDir, 'native-modules/package.json')).dependencies;
+  if (!detectedNativeModules) {
+    throw new Error('Native module versions must be detected from the upstream DMG; refusing npm latest fallback for better-sqlite3/node-pty.');
+  }
   const nativeBuildTools = { ...policyNativeModuleBuildTools() };
   nativeBuildTools['@electron/rebuild'] ??= npmLatest('@electron/rebuild');
   nativeBuildTools['node-abi'] ??= npmLatest('node-abi');
   if (!nativeBuildTools['@electron/rebuild'] || !nativeBuildTools['node-abi']) {
     throw new Error('Native module build tool versions must be resolved from npm metadata during dependency resolution.');
   }
-  const betterSqlite3Version = detectedNativeModules?.betterSqlite3Version ?? currentNativeDeps['better-sqlite3'];
-  const nodePtyVersion = detectedNativeModules?.nodePtyVersion ?? currentNativeDeps['node-pty'];
-  if (detectedNativeModules) {
-    report.push(`detected native modules better-sqlite3@${detectedNativeModules.betterSqlite3Detected}, node-pty@${nodePtyVersion} from DMG`);
-    if (betterSqlite3Version !== detectedNativeModules.betterSqlite3Detected) {
-      report.push(`using better-sqlite3@${betterSqlite3Version} for Electron v${upstream.electronVersion} compatibility`);
-    }
+  const betterSqlite3Version = detectedNativeModules.betterSqlite3Version;
+  const nodePtyVersion = detectedNativeModules.nodePtyVersion;
+  report.push(`detected native modules better-sqlite3@${detectedNativeModules.betterSqlite3Detected}, node-pty@${nodePtyVersion} from DMG`);
+  if (betterSqlite3Version !== detectedNativeModules.betterSqlite3Detected) {
+    report.push(`using better-sqlite3@${betterSqlite3Version} for Electron v${upstream.electronVersion} compatibility`);
   }
 
   const toolDeps = {};
