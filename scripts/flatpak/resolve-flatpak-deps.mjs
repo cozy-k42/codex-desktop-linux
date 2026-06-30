@@ -18,16 +18,22 @@ let upstreamPath = path.join(flatpakWriteDir, 'upstream.json');
 let resolvedDmgForLock = null;
 
 function usage() {
-  console.error(`Usage: resolve-flatpak-deps.mjs [--write-pins] [--check] [--download-dmg|--no-download-dmg] [--download-binaries|--no-download-binaries] [--probe-flatpak|--no-probe-flatpak] [--offline]\n\nResolves Flatpak packaging inputs before flatpak-builder runs. The resolver may use\nnetwork and host/Flatpak tooling outside the flatpak-builder sandbox, then writes\nresolved files. By default outputs are written under dist/flatpak/generated/;\n--write-pins updates the checked-in packaging/flatpak pins.`);
+  console.error(`Usage: resolve-flatpak-deps.mjs [--write-pins] [--check] [--download-dmg|--no-download-dmg] [--download-binaries|--no-download-binaries] [--probe-flatpak|--no-probe-flatpak] [--offline]\n\nResolves Flatpak packaging inputs before flatpak-builder runs. The resolver may use\nnetwork and host/Flatpak tooling outside the flatpak-builder sandbox, then writes\nresolved files. By default it downloads the mutable upstream Codex.dmg and any\nbinary sources whose URLs change so generated Flatpak inputs contain current\npayload checksums; pass --no-download-dmg for a headers-only refresh. By default\noutputs are written under dist/flatpak/generated/;\n--write-pins updates the checked-in packaging/flatpak pins.`);
   process.exit(1);
+}
+
+function envFlag(name, defaultValue) {
+  const value = process.env[name];
+  if (value == null || value === '') return defaultValue;
+  return !/^(0|false|no|off)$/iu.test(value);
 }
 
 const options = {
   writePins: false,
   check: false,
-  downloadDmg: process.env.FLATPAK_RESOLVE_DOWNLOAD_DMG === '1',
+  downloadDmg: envFlag('FLATPAK_RESOLVE_DOWNLOAD_DMG', true),
   probeFlatpak: process.env.FLATPAK_RESOLVE_PROBE_FLATPAK !== '0',
-  downloadBinaries: process.env.FLATPAK_RESOLVE_DOWNLOAD_BINARIES === '1',
+  downloadBinaries: envFlag('FLATPAK_RESOLVE_DOWNLOAD_BINARIES', true),
   network: process.env.FLATPAK_RESOLVE_NETWORK !== '0',
 };
 for (let i = 2; i < process.argv.length; i += 1) {
