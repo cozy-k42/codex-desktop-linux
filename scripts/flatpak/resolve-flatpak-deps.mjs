@@ -420,14 +420,14 @@ function readPlistAppVersion(appDir) {
   const py = run('python3', ['-c', 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); print(p.get("CFBundleShortVersionString") or p.get("CFBundleVersion") or "")', plist], { capture: true, optional: true });
   return generatedAppVersion(py?.stdout?.trim());
 }
-function maybeDetectAppVersionFromDmg(localDmg) {
+export function maybeDetectAppVersionFromDmg(localDmg) {
   if (!localDmg || !fs.existsSync(localDmg)) return null;
   if (!run('sh', ['-c', 'command -v 7z >/dev/null 2>&1'], { optional: true, capture: true })) return null;
   const tmp = fs.mkdtempSync(path.join('/tmp', 'codex-flatpak-version-dmg-'));
   try {
     const result = run('7z', ['x', '-y', '-snl', `-o${tmp}`, localDmg], { capture: true, optional: true });
-    if (!result) return null;
     const appDir = findFirstAppDir(tmp);
+    if (!result && !appDir) return null;
     if (!appDir) return null;
     const asarPackage = extractAsarPackageJson(appDir, tmp);
     const packageVersion = asarPackage ? generatedAppVersion(readJson(asarPackage).version) : null;
