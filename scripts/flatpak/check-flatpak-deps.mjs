@@ -108,9 +108,9 @@ const cliPkg = readJson('packaging/flatpak/codex-cli/package.json');
 const nativePkg = readJson('packaging/flatpak/native-modules/package.json');
 const nativePolicy = readJson('packaging/flatpak/native-modules-policy.json');
 
-assertEqual(asarPkg.dependencies.asar, upstream.asarVersion, 'Flatpak asar version');
-assertEqual(cliPkg.dependencies['@openai/codex'], upstream.codexCliVersion, 'Flatpak Codex CLI version');
-assertEqual(nativePkg.dependencies.electron, upstream.electronVersion, 'Flatpak native module Electron version');
+if (upstream.asarVersion) assertEqual(asarPkg.dependencies.asar, upstream.asarVersion, 'Flatpak asar version');
+if (upstream.codexCliVersion) assertEqual(cliPkg.dependencies['@openai/codex'], upstream.codexCliVersion, 'Flatpak Codex CLI version');
+if (upstream.electronVersion) assertEqual(nativePkg.dependencies.electron, upstream.electronVersion, 'Flatpak native module Electron version');
 assertEqual(nativePkg.dependencies['@electron/rebuild'], nativePolicy.nativeModuleBuildTools['@electron/rebuild'], 'Flatpak @electron/rebuild policy version');
 assertEqual(nativePkg.dependencies['node-abi'], nativePolicy.nativeModuleBuildTools['node-abi'], 'Flatpak node-abi policy version');
 for (const packageName of ['@electron/rebuild', 'node-abi']) {
@@ -136,7 +136,11 @@ for (const relative of [
 }
 
 const tempManifest = path.join(flatpakDir, '.io.github.ilysenko.codex_desktop_linux.check.json');
+const canRenderPinnedManifest = upstream.codexDmg?.sha256 && upstream.electronHeaders && upstream.electronZip && upstream.managedNode && upstream.pythonStandalone && upstream.sevenZip;
 try {
+  if (!canRenderPinnedManifest) {
+    console.log('Skipping checked-in Flatpak manifest render check because binary versions/checksums are resolved dynamically.');
+  } else {
   const result = spawnSync('node', ['packaging/flatpak/render-manifest.mjs', '--output', tempManifest], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -164,6 +168,7 @@ try {
     if (omittedSourcesManifest) {
       assertManifestSourcesForStrategies(omittedSourcesManifest, omittedSourcesUpstream, 'generated omitted-source manifest');
     }
+  }
   }
 } finally {
   fs.rmSync(tempManifest, { force: true });

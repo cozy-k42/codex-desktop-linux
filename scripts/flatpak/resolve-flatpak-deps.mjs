@@ -791,6 +791,10 @@ function maybeDetectElectronFromDmg(localDmg) {
 async function resolve() {
   if (!options.writePins && !options.check) prepareGeneratedInputs();
   const upstream = readJson(upstreamPath);
+  upstream.electronZip ??= { x86_64: {}, aarch64: {} };
+  upstream.electronZip.x86_64 ??= {};
+  upstream.electronZip.aarch64 ??= {};
+  upstream.electronHeaders ??= {};
   const pinnedCodexVersion = upstream.codexVersion;
   const report = [];
 
@@ -859,7 +863,15 @@ async function resolve() {
     }
   }
 
+  if (!upstream.electronVersion) {
+    throw new Error('Electron version must be detected from the upstream DMG during dependency resolution; refusing hardcoded Flatpak Electron version fallback.');
+  }
+
   const previousUpstream = readJson(pinnedUpstreamPath);
+  previousUpstream.electronZip ??= { x86_64: {}, aarch64: {} };
+  previousUpstream.electronZip.x86_64 ??= {};
+  previousUpstream.electronZip.aarch64 ??= {};
+  previousUpstream.electronHeaders ??= {};
   upstream.electronZip.x86_64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-x64.zip`;
   upstream.electronZip.aarch64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-arm64.zip`;
   upstream.electronHeaders.url = `https://artifacts.electronjs.org/headers/dist/v${upstream.electronVersion}/node-v${upstream.electronVersion}-headers.tar.gz`;
@@ -874,8 +886,16 @@ async function resolve() {
   upstream.electronRuntime = resolveElectronRuntime(upstream);
   report.push(`Electron runtime strategy=${upstream.electronRuntime.strategy} requested=${upstream.electronRuntime.requestedStrategy} upstream=${upstream.electronVersion} baseapp=${upstream.electronRuntime.baseapp.electronVersion ?? 'unknown'} (${upstream.electronRuntime.compatibility})`);
 
+  const asarLatest = process.env.FLATPAK_RESOLVE_NPM_LATEST === '0' ? null : npmLatest('asar');
+  if (asarLatest) upstream.asarVersion = asarLatest;
+  if (!upstream.asarVersion) {
+    throw new Error('asar version must be resolved from npm metadata during dependency resolution; refusing hardcoded Flatpak asar version fallback.');
+  }
   const cliLatest = process.env.FLATPAK_RESOLVE_NPM_LATEST === '0' ? null : npmLatest('@openai/codex');
   if (cliLatest) upstream.codexCliVersion = cliLatest;
+  if (!upstream.codexCliVersion) {
+    throw new Error('Codex CLI version must be resolved from npm metadata during dependency resolution; refusing hardcoded Flatpak CLI version fallback.');
+  }
 
   upstream.flatpakToolStrategy = {
     ...resolvePythonStrategies(upstream),
