@@ -503,10 +503,13 @@ async function fetchText(url) {
 function nodeAssetName(version, arch) {
   return `node-v${version}-linux-${arch}.tar.xz`;
 }
+function unresolvedDynamicSource(label, reason) {
+  throw new Error(`${label} must be resolved from upstream metadata during this run; refusing pinned checksum fallback (${reason}).`);
+}
 async function resolveLatestManagedNode(previous) {
   const forced = process.env.CODEX_FLATPAK_MANAGED_NODE_VERSION?.trim();
   const index = await fetchJson('https://nodejs.org/dist/index.json').catch(() => null);
-  if (!index) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  if (!index) unresolvedDynamicSource('Node.js managed runtime', options.network ? 'network-unavailable' : 'offline');
   const minimum = [22, 22, 0];
   const versionOk = (version) => {
     const parts = String(version).replace(/^v/, '').split('.').map((v) => Number(v));
@@ -519,17 +522,17 @@ async function resolveLatestManagedNode(previous) {
   const selected = forced
     ? index.find((entry) => entry.version === `v${forced.replace(/^v/, '')}`)
     : index.find((entry) => entry.lts && versionOk(entry.version));
-  if (!selected) return { value: previous, changed: false, source: forced ? 'pinned-forced-version-unavailable' : 'pinned-no-compatible-lts' };
+  if (!selected) unresolvedDynamicSource('Node.js managed runtime', forced ? 'forced-version-unavailable' : 'no-compatible-lts');
   const version = selected.version.replace(/^v/, '');
   const shasums = await fetchText(`https://nodejs.org/dist/v${version}/SHASUMS256.txt`).catch(() => null);
-  if (!shasums) return { value: previous, changed: false, source: 'pinned-shasums-unavailable' };
+  if (!shasums) unresolvedDynamicSource('Node.js managed runtime', 'shasums-unavailable');
   const shaFor = (asset) => shasums.split(/\r?\n/).map((line) => line.trim().split(/\s+/)).find(([, name]) => name === asset)?.[0] ?? '';
   const next = {
     version,
     x86_64: { url: `https://nodejs.org/dist/v${version}/${nodeAssetName(version, 'x64')}`, sha256: shaFor(nodeAssetName(version, 'x64')) },
     aarch64: { url: `https://nodejs.org/dist/v${version}/${nodeAssetName(version, 'arm64')}`, sha256: shaFor(nodeAssetName(version, 'arm64')) },
   };
-  if (!next.x86_64.sha256 || !next.aarch64.sha256) return { value: previous, changed: false, source: 'pinned-missing-arch-shasum' };
+  if (!next.x86_64.sha256 || !next.aarch64.sha256) unresolvedDynamicSource('Node.js managed runtime', 'missing-arch-shasum');
   return { value: next, changed: JSON.stringify(next) !== JSON.stringify(previous), source: forced ? 'env-nodejs-index' : 'nodejs-index-latest-lts' };
 }
 function githubAssetUrl(release, pattern) {
@@ -537,17 +540,17 @@ function githubAssetUrl(release, pattern) {
 }
 async function resolveLatestSevenZip(previous) {
   const release = await fetchJson('https://api.github.com/repos/ip7z/7zip/releases/latest').catch(() => null);
-  if (!release?.tag_name) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  if (!release?.tag_name) unresolvedDynamicSource('7-Zip fallback', options.network ? 'network-unavailable' : 'offline');
   const version = release.tag_name.replace(/^v/i, '');
   const x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
   const arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
-  if (!x64 || !arm64) return { value: previous, changed: false, source: 'pinned-missing-assets' };
+  if (!x64 || !arm64) unresolvedDynamicSource('7-Zip fallback', 'missing-assets');
   const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
   return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-release' };
 }
 async function resolveLatestPythonStandalone(previous) {
   const releases = await fetchJson('https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=20').catch(() => null);
-  if (!Array.isArray(releases)) return { value: previous, changed: false, source: options.network ? 'pinned-network-unavailable' : 'pinned-offline' };
+  if (!Array.isArray(releases)) unresolvedDynamicSource('Python standalone fallback', options.network ? 'network-unavailable' : 'offline');
   for (const release of releases) {
     const x64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
     const arm64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+aarch64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
@@ -557,7 +560,7 @@ async function resolveLatestPythonStandalone(previous) {
     const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
     return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-cpython-3.10-release' };
   }
-  return { value: previous, changed: false, source: 'pinned-no-compatible-assets' };
+  unresolvedDynamicSource('Python standalone fallback', 'no-compatible-assets');
 }
 async function refreshBinaryFallbacks(upstream, previousUpstream) {
   const node = await resolveLatestManagedNode(upstream.managedNode);
@@ -577,9 +580,9 @@ async function refreshBinaryFallbacks(upstream, previousUpstream) {
 }
 async function refreshPinnedFileSource(source, label, previousUrl) {
   if (!source?.url) return;
-  if (!options.downloadBinaries && previousUrl === source.url && source.sha256) return;
-  if (!options.downloadBinaries && previousUrl !== source.url) {
-    throw new Error(`${label} URL changed to ${source.url}, but FLATPAK_RESOLVE_DOWNLOAD_BINARIES=1 was not set to refresh its sha256`);
+  if (!options.downloadBinaries) {
+    if (source.sha256 && previousUrl !== source.url) return;
+    throw new Error(`${label} checksum must be produced by this resolver run; refusing to reuse pinned checksum. Enable binary downloads or provide upstream metadata with sha256.`);
   }
   const cacheDir = process.env.CODEX_FLATPAK_DEPS_CACHE || path.join(repoRoot, '.flatpak-deps-cache');
   const extension = path.extname(new URL(source.url).pathname) || '.bin';
