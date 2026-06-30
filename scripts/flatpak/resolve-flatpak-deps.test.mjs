@@ -8,17 +8,17 @@ const shaA = 'a'.repeat(64);
 const shaB = 'b'.repeat(64);
 
 test('same DMG hash produces same fallback version', () => {
-  const first = resolveCodexVersion({ dmgSha256: shaA });
-  const second = resolveCodexVersion({ dmgSha256: shaA });
+  const first = resolveCodexVersion({ dmgSha256: shaA, dmgLastModified: 'Tue, 30 Jun 2026 12:34:56 GMT' });
+  const second = resolveCodexVersion({ dmgSha256: shaA, dmgLastModified: 'Tue, 30 Jun 2026 12:34:56 GMT' });
   assert.equal(first, second);
-  assert.equal(first, '0.0.1+dmg.aaaaaaaa');
+  assert.equal(first, '2026.06.30.1234+dmg.aaaaaaaa');
 });
 
 test('changed DMG hash changes fallback version', () => {
-  const first = resolveCodexVersion({ dmgSha256: shaA });
-  const second = resolveCodexVersion({ dmgSha256: shaB });
+  const first = resolveCodexVersion({ dmgSha256: shaA, dmgSize: 525052314 });
+  const second = resolveCodexVersion({ dmgSha256: shaB, dmgSize: 525052314 });
   assert.notEqual(first, second);
-  assert.equal(second, '0.0.1+dmg.bbbbbbbb');
+  assert.equal(second, '525052314+dmg.bbbbbbbb');
 });
 
 test('explicit PACKAGE_VERSION or FLATPAK_APP_VERSION override wins', () => {

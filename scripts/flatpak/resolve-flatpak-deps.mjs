@@ -265,7 +265,20 @@ function generatedAppVersion(value) {
 function versionHashSuffix(sha) {
   return String(sha ?? '').replace(/[^0-9a-f]/giu, '').toLowerCase().slice(0, 8);
 }
-export function resolveCodexVersion({ appVersion, dmgSha256, packageVersion, flatpakAppVersion, pinnedVersion } = {}) {
+function dmgMetadataVersionBase({ lastModified, size } = {}) {
+  const parsed = lastModified ? new Date(lastModified) : null;
+  if (parsed && !Number.isNaN(parsed.valueOf())) {
+    const year = parsed.getUTCFullYear();
+    const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getUTCDate()).padStart(2, '0');
+    const hour = String(parsed.getUTCHours()).padStart(2, '0');
+    const minute = String(parsed.getUTCMinutes()).padStart(2, '0');
+    return `${year}.${month}.${day}.${hour}${minute}`;
+  }
+  const numericSize = Number(size);
+  return Number.isFinite(numericSize) && numericSize > 0 ? String(Math.trunc(numericSize)) : null;
+}
+export function resolveCodexVersion({ appVersion, dmgSha256, dmgLastModified, dmgSize, packageVersion, flatpakAppVersion, pinnedVersion } = {}) {
   const flatpakOverride = String(flatpakAppVersion ?? '').trim();
   if (flatpakOverride) return flatpakOverride;
   const packageOverride = generatedAppVersion(packageVersion);
@@ -276,7 +289,9 @@ export function resolveCodexVersion({ appVersion, dmgSha256, packageVersion, fla
   const suffix = versionHashSuffix(dmgSha256);
   if (suffix && pinned) return `${pinned}+dmg.${suffix}`;
   if (pinned) return pinned;
-  throw new Error('Flatpak app version must be resolved from upstream app metadata or FLATPAK_APP_VERSION/PACKAGE_VERSION; refusing hardcoded fallback version.');
+  const dmgBase = dmgMetadataVersionBase({ lastModified: dmgLastModified, size: dmgSize });
+  if (suffix && dmgBase) return `${dmgBase}+dmg.${suffix}`;
+  throw new Error('Flatpak app version must be resolved from upstream app metadata, upstream DMG metadata, or FLATPAK_APP_VERSION/PACKAGE_VERSION; refusing hardcoded fallback version.');
 }
 async function fetchHeaders(url) {
   const response = await fetch(url, { method: 'HEAD' });
@@ -897,6 +912,8 @@ async function resolve() {
     upstream.codexVersion = resolveCodexVersion({
       appVersion: detectedAppVersion,
       dmgSha256: sha,
+      dmgLastModified: upstream.codexDmg?.lastModified,
+      dmgSize: upstream.codexDmg?.size,
       packageVersion: process.env.PACKAGE_VERSION,
       flatpakAppVersion: process.env.FLATPAK_APP_VERSION,
       pinnedVersion: pinnedCodexVersion,
@@ -914,6 +931,8 @@ async function resolve() {
     upstream.codexVersion = resolveCodexVersion({
       appVersion: null,
       dmgSha256: upstream.codexDmg?.sha256,
+      dmgLastModified: upstream.codexDmg?.lastModified,
+      dmgSize: upstream.codexDmg?.size,
       packageVersion: process.env.PACKAGE_VERSION,
       flatpakAppVersion: process.env.FLATPAK_APP_VERSION,
       pinnedVersion: pinnedCodexVersion,
