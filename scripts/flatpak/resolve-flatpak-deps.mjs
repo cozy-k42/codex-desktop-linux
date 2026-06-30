@@ -538,44 +538,86 @@ async function resolveLatestManagedNode(previous) {
 function githubAssetUrl(release, pattern) {
   return release?.assets?.find((asset) => pattern.test(asset.name))?.browser_download_url ?? null;
 }
+
+async function fetchGithubReleaseAssetsFromHtml(repo, tag = '') {
+  const url = tag ? `https://github.com/${repo}/releases/expanded_assets/${tag}` : `https://github.com/${repo}/releases`;
+  const html = await fetchText(url).catch(() => null);
+  if (!html) return [];
+  const escapedRepo = repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`/${escapedRepo}/releases/download/([^/]+)/([^"'<>\\s]+)`, 'gu');
+  const assets = [];
+  for (const match of html.matchAll(pattern)) {
+    assets.push({ tag: match[1], name: decodeURIComponent(match[2]), url: `https://github.com/${repo}/releases/download/${match[1]}/${match[2]}` });
+  }
+  return assets;
+}
 async function resolveLatestSevenZip(previous) {
   const release = await fetchJson('https://api.github.com/repos/ip7z/7zip/releases/latest').catch(() => null);
-  if (!release?.tag_name) unresolvedDynamicSource('7-Zip fallback', options.network ? 'network-unavailable' : 'offline');
-  const version = release.tag_name.replace(/^v/i, '');
-  const x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
-  const arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
+  let version = release?.tag_name?.replace(/^v/i, '') ?? '';
+  let x64 = githubAssetUrl(release, /linux-x64\.tar\.xz$/u);
+  let arm64 = githubAssetUrl(release, /linux-arm64\.tar\.xz$/u);
+  let source = 'github-latest-release-api';
+  if (!version || !x64 || !arm64) {
+    const assets = await fetchGithubReleaseAssetsFromHtml('ip7z/7zip');
+    const firstTag = assets.find((asset) => /linux-(?:x64|arm64)\.tar\.xz$/u.test(asset.name))?.tag;
+    version = firstTag?.replace(/^v/i, '') ?? version;
+    x64 = assets.find((asset) => asset.tag === firstTag && /linux-x64\.tar\.xz$/u.test(asset.name))?.url ?? x64;
+    arm64 = assets.find((asset) => asset.tag === firstTag && /linux-arm64\.tar\.xz$/u.test(asset.name))?.url ?? arm64;
+    source = 'github-releases-html';
+  }
+  if (!version) unresolvedDynamicSource('7-Zip fallback', options.network ? 'network-unavailable' : 'offline');
   if (!x64 || !arm64) unresolvedDynamicSource('7-Zip fallback', 'missing-assets');
   const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
-  return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-release' };
+  return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source };
 }
 async function resolveLatestPythonStandalone(previous) {
+  const x64Pattern = /cpython-3\.10\.[^/]+x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u;
+  const arm64Pattern = /cpython-3\.10\.[^/]+aarch64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u;
   const releases = await fetchJson('https://api.github.com/repos/astral-sh/python-build-standalone/releases?per_page=20').catch(() => null);
-  if (!Array.isArray(releases)) unresolvedDynamicSource('Python standalone fallback', options.network ? 'network-unavailable' : 'offline');
-  for (const release of releases) {
-    const x64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
-    const arm64 = githubAssetUrl(release, /cpython-3\.10\.[^/]+aarch64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u);
-    if (!x64 || !arm64) continue;
-    const decoded = decodeURIComponent(new URL(x64).pathname.split('/').pop() ?? '');
-    const version = decoded.replace(/^cpython-/u, '').replace(/-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u, '');
-    const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
-    return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-cpython-3.10-release' };
+  if (Array.isArray(releases)) {
+    for (const release of releases) {
+      const x64 = githubAssetUrl(release, x64Pattern);
+      const arm64 = githubAssetUrl(release, arm64Pattern);
+      if (!x64 || !arm64) continue;
+      const decoded = decodeURIComponent(new URL(x64).pathname.split('/').pop() ?? '');
+      const version = decoded.replace(/^cpython-/u, '').replace(/-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u, '');
+      const next = { version, x86_64: { url: x64, sha256: '' }, aarch64: { url: arm64, sha256: '' } };
+      return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: x64 }, aarch64: { url: arm64 } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-latest-cpython-3.10-release-api' };
+    }
   }
-  unresolvedDynamicSource('Python standalone fallback', 'no-compatible-assets');
+  const assets = await fetchGithubReleaseAssetsFromHtml('astral-sh/python-build-standalone');
+  for (const asset of assets) {
+    if (!x64Pattern.test(asset.name)) continue;
+    const arm64 = assets.find((candidate) => candidate.tag === asset.tag && arm64Pattern.test(candidate.name));
+    if (!arm64) continue;
+    const version = asset.name.replace(/^cpython-/u, '').replace(/-x86_64-unknown-linux-gnu-install_only_stripped\.tar\.gz$/u, '');
+    const next = { version, x86_64: { url: asset.url, sha256: '' }, aarch64: { url: arm64.url, sha256: '' } };
+    return { value: next, changed: JSON.stringify({ ...next, x86_64: { url: asset.url }, aarch64: { url: arm64.url } }) !== JSON.stringify({ version: previous?.version, x86_64: { url: previous?.x86_64?.url }, aarch64: { url: previous?.aarch64?.url } }), source: 'github-releases-html-cpython-3.10' };
+  }
+  unresolvedDynamicSource('Python standalone fallback', options.network ? 'no-compatible-assets-or-network-unavailable' : 'offline');
 }
-async function refreshBinaryFallbacks(upstream, previousUpstream) {
-  const node = await resolveLatestManagedNode(upstream.managedNode);
-  upstream.managedNode = node.value;
-  const python = await resolveLatestPythonStandalone(upstream.pythonStandalone);
-  upstream.pythonStandalone = python.value;
-  const sevenZip = await resolveLatestSevenZip(upstream.sevenZip);
-  upstream.sevenZip = sevenZip.value;
+async function refreshBinaryFallbacks(upstream, previousUpstream, needs) {
+  const skipped = (source) => ({ value: null, changed: false, source });
+  const node = needs.node ? await resolveLatestManagedNode(upstream.managedNode) : skipped('not-needed-runtime-or-sdk');
+  if (needs.node) {
+    upstream.managedNode = node.value;
+    await refreshPinnedFileSource(upstream.managedNode?.x86_64, 'Node.js x86_64 runtime', previousUpstream.managedNode?.x86_64?.url);
+    await refreshPinnedFileSource(upstream.managedNode?.aarch64, 'Node.js aarch64 runtime', previousUpstream.managedNode?.aarch64?.url);
+  }
 
-  await refreshPinnedFileSource(upstream.managedNode?.x86_64, 'Node.js x86_64 runtime', previousUpstream.managedNode?.x86_64?.url);
-  await refreshPinnedFileSource(upstream.managedNode?.aarch64, 'Node.js aarch64 runtime', previousUpstream.managedNode?.aarch64?.url);
-  await refreshPinnedFileSource(upstream.pythonStandalone?.x86_64, 'Python standalone x86_64 runtime', previousUpstream.pythonStandalone?.x86_64?.url);
-  await refreshPinnedFileSource(upstream.pythonStandalone?.aarch64, 'Python standalone aarch64 runtime', previousUpstream.pythonStandalone?.aarch64?.url);
-  await refreshPinnedFileSource(upstream.sevenZip?.x86_64, '7-Zip x86_64 build tool', previousUpstream.sevenZip?.x86_64?.url);
-  await refreshPinnedFileSource(upstream.sevenZip?.aarch64, '7-Zip aarch64 build tool', previousUpstream.sevenZip?.aarch64?.url);
+  const python = needs.python ? await resolveLatestPythonStandalone(upstream.pythonStandalone) : skipped('not-needed-runtime');
+  if (needs.python) {
+    upstream.pythonStandalone = python.value;
+    await refreshPinnedFileSource(upstream.pythonStandalone?.x86_64, 'Python standalone x86_64 runtime', previousUpstream.pythonStandalone?.x86_64?.url);
+    await refreshPinnedFileSource(upstream.pythonStandalone?.aarch64, 'Python standalone aarch64 runtime', previousUpstream.pythonStandalone?.aarch64?.url);
+  }
+
+  const sevenZip = needs.sevenZip ? await resolveLatestSevenZip(upstream.sevenZip) : skipped('not-needed-sdk');
+  if (needs.sevenZip) {
+    upstream.sevenZip = sevenZip.value;
+    await refreshPinnedFileSource(upstream.sevenZip?.x86_64, '7-Zip x86_64 build tool', previousUpstream.sevenZip?.x86_64?.url);
+    await refreshPinnedFileSource(upstream.sevenZip?.aarch64, '7-Zip aarch64 build tool', previousUpstream.sevenZip?.aarch64?.url);
+  }
   return { node, python, sevenZip };
 }
 async function refreshPinnedFileSource(source, label, previousUrl) {
@@ -875,16 +917,14 @@ async function resolve() {
   upstream.electronZip.x86_64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-x64.zip`;
   upstream.electronZip.aarch64.url = `https://github.com/electron/electron/releases/download/v${upstream.electronVersion}/electron-v${upstream.electronVersion}-linux-arm64.zip`;
   upstream.electronHeaders.url = `https://artifacts.electronjs.org/headers/dist/v${upstream.electronVersion}/node-v${upstream.electronVersion}-headers.tar.gz`;
-  const fallbackResolution = await refreshBinaryFallbacks(upstream, previousUpstream);
-  report.push(`managed Node fallback ${upstream.managedNode?.version ?? 'unknown'} source=${fallbackResolution.node.source}`);
-  report.push(`Python fallback ${upstream.pythonStandalone?.version ?? 'unknown'} source=${fallbackResolution.python.source}`);
-  report.push(`7-Zip fallback ${upstream.sevenZip?.version ?? 'unknown'} source=${fallbackResolution.sevenZip.source}`);
-  await refreshPinnedFileSource(upstream.electronZip.x86_64, 'Electron x86_64 runtime', previousUpstream.electronZip?.x86_64?.url);
-  await refreshPinnedFileSource(upstream.electronZip.aarch64, 'Electron aarch64 runtime', previousUpstream.electronZip?.aarch64?.url);
   await refreshPinnedFileSource(upstream.electronHeaders, 'Electron headers', previousUpstream.electronHeaders?.url);
 
   upstream.electronRuntime = resolveElectronRuntime(upstream);
   report.push(`Electron runtime strategy=${upstream.electronRuntime.strategy} requested=${upstream.electronRuntime.requestedStrategy} upstream=${upstream.electronVersion} baseapp=${upstream.electronRuntime.baseapp.electronVersion ?? 'unknown'} (${upstream.electronRuntime.compatibility})`);
+  if (upstream.electronRuntime.strategy === 'bundled') {
+    await refreshPinnedFileSource(upstream.electronZip.x86_64, 'Electron x86_64 runtime', previousUpstream.electronZip?.x86_64?.url);
+    await refreshPinnedFileSource(upstream.electronZip.aarch64, 'Electron aarch64 runtime', previousUpstream.electronZip?.aarch64?.url);
+  }
 
   const asarLatest = process.env.FLATPAK_RESOLVE_NPM_LATEST === '0' ? null : npmLatest('asar');
   if (asarLatest) upstream.asarVersion = asarLatest;
@@ -910,6 +950,15 @@ async function resolve() {
     runtimeProbe: upstream.flatpakToolStrategy.runtimeNode?.probe ?? upstream.node?.runtimeProbe ?? null,
   };
   report.push(`Node build strategy=${upstream.node.buildStrategy} runtime strategy=${upstream.node.runtimeStrategy}`);
+  const runtimePythonStrategy = upstream.flatpakToolStrategy.runtimePython?.strategy ?? upstream.flatpakToolStrategy.runtimePython ?? 'bundled';
+  const fallbackResolution = await refreshBinaryFallbacks(upstream, previousUpstream, {
+    node: upstream.node.buildStrategy === 'bundled-managed-node' || upstream.node.runtimeStrategy === 'bundled-managed-node',
+    python: runtimePythonStrategy === 'bundled',
+    sevenZip: (upstream.flatpakToolStrategy.buildSevenZip ?? 'bundled') === 'bundled',
+  });
+  report.push(`managed Node fallback ${upstream.managedNode?.version ?? 'not needed'} source=${fallbackResolution.node.source}`);
+  report.push(`Python fallback ${upstream.pythonStandalone?.version ?? 'not needed'} source=${fallbackResolution.python.source}`);
+  report.push(`7-Zip fallback ${upstream.sevenZip?.version ?? 'not needed'} source=${fallbackResolution.sevenZip.source}`);
   report.push(`Git strategy=${upstream.flatpakToolStrategy.git.strategy} ripgrep strategy=${upstream.flatpakToolStrategy.ripgrep.strategy}`);
 
   if ((upstream.flatpakToolStrategy.runtimePython?.strategy ?? upstream.flatpakToolStrategy.runtimePython) === 'sdk' && upstream.flatpakToolStrategy.runtimePython?.probe?.available !== true) {
