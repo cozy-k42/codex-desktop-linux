@@ -1,0 +1,37 @@
+{
+  "appId": "io.github.ilysenko.codex_desktop_linux",
+  "displayName": "Codex Desktop Linux",
+  "runtimeVersion": "25.08",
+  "codexDmg": {
+    "url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg"
+  },
+  "flatpakToolStrategy": {
+    "buildPython": {
+      "strategy": "unavailable",
+      "probe": {
+        "ref": "org.freedesktop.Sdk//25.08",
+        "tool": "python3",
+        "available": null,
+        "source": "not-probed"
+      }
+    },
+    "runtimePython": {
+      "strategy": "bundled",
+      "probe": {
+        "ref": "org.electronjs.Electron2.BaseApp//25.08",
+        "tool": "python3",
+        "available": null,
+        "source": "not-probed"
+      }
+    },
+    "buildSevenZip": "bundled"
+  },
+  "electronRuntime": {
+    "strategy": "bundled",
+    "headersStrategy": "source"
+  },
+  "node": {
+    "buildStrategy": "bundled-managed-node",
+    "runtimeStrategy": "bundled-managed-node"
+  }
+}

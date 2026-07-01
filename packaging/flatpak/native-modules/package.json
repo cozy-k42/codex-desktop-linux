@@ -1,0 +1,12 @@
+{
+  "name": "codex-desktop-flatpak-native-modules",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@electron/rebuild": "latest",
+    "better-sqlite3": "latest",
+    "electron": "latest",
+    "node-abi": "latest",
+    "node-pty": "latest"
+  }
+}
