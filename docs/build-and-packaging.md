@@ -5,6 +5,7 @@
 You need:
 
 - `python3`, `7z` or `7zz`, `curl`, `unzip`, `tar`, `make`, `g++`
+- `flatpak` and `flatpak-builder` for Flatpak self-builds
 - Rust toolchain with `cargo` for `codex-update-manager`,
   `codex-computer-use-linux`, the Chrome extension host binary, and optional
   Rust-backed features such as Read Aloud MCP and Record & Replay
@@ -107,8 +108,8 @@ CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.s
 
 ## Package Formats
 
-After `make build-app` or `make build-app-fresh`, build a package from
-`codex-app/`:
+After `make build-app` or `make build-app-fresh`, build a native package or
+AppImage from `codex-app/`:
 
 | Format | Build command | Output | Install |
 |---|---|---|---|
@@ -124,8 +125,9 @@ Override package version:
 PACKAGE_VERSION=2026.03.24.220723+88f07cd3 make deb
 ```
 
-The packaging scripts only repackage what is already in `codex-app/`; they do
-not download or extract the DMG.
+The native package and AppImage scripts only repackage what is already in
+`codex-app/`; they do not download or extract the DMG. Flatpak is handled
+separately below and rebuilds from source inside `flatpak-builder`.
 
 ## AppImage Local Self-Build
 
@@ -151,6 +153,80 @@ AppImage builds require `appimagetool` on `PATH`, or:
 ```bash
 APPIMAGETOOL=/path/to/appimagetool make appimage
 ```
+
+## Flatpak Self-Build
+
+```bash
+flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+make flatpak
+flatpak install --user dist/io.github.ilysenko.codex_desktop_linux-*.flatpak
+```
+
+The Flatpak build path first resolves packaging inputs outside the `flatpak-builder` sandbox, then renders `packaging/flatpak/io.github.ilysenko.codex_desktop_linux.json`, stages a pinned npm cache for `asar`, the bundled Codex CLI, and native-module rebuild inputs, and finally builds a local bundle through `flatpak-builder`. The resolver may check the upstream DMG metadata, use a local `Codex.dmg` when present, keep package versions aligned with `packaging/flatpak/upstream.json`, and probe the Flatpak SDK for reusable Python and build-time 7z tools. The `flatpak-builder` step still consumes pinned sources only.
+
+`scripts/build-flatpak.sh` always builds through `flatpak-builder`, which is the same path you should expect to use for a Flathub submission. If the host cannot run `flatpak-builder`'s sandbox correctly, Flatpak self-builds are unsupported on that host; build on another machine or in a working Flatpak-capable environment instead of falling back to a host-side export path. Set `FLATPAK_RESOLVE_DEPS=0` to skip the pre-build resolver and use the checked-in pins exactly as-is.
+
+The default Flatpak manifest is intentionally self-contained rather than native-package feature parity. It keeps the desktop shell, bundled Codex CLI, bundled Node runtime, bundled Git and ripgrep runtime tools, GPU/window-system access, the PulseAudio compatibility socket for in-app voice input/output, SSH agent forwarding, and Secret Service access that the packaged app needs, while deliberately avoiding both broad host filesystem grants and the `org.freedesktop.Flatpak` host-command bridge.
+
+The wrapper pins `HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_CACHE_HOME`, and `XDG_STATE_HOME` into Flatpak-managed persistent storage under `/var`, so launcher state, Codex home, CLI caches, and Git config stay inside the sandbox. That is the default storage model for the Flatpak package, but it does not prevent explicit user-granted access to files or directories chosen through portal-backed file dialogs.
+
+As a result, the default Flatpak build should be treated as a sandboxed desktop package with a reduced support matrix relative to the native packages in this repository:
+
+- no packaged updater / rebuild-manager flow
+- no host browser native-host registration
+- no Linux Computer Use staging
+- no broad host filesystem grant; host files are available only when the user explicitly chooses them through the document portal
+
+If full host integration is a hard requirement, prefer the native packages from this repository. A Flatpak variant that adds broad host filesystem access or `org.freedesktop.Flatpak` host-command access would be a different trust model and should not be the default Flathub submission.
+
+Important differences from the native package flow:
+
+- No `codex-update-manager`, package hooks, or privileged in-app updater path.
+- No bundled Browser Use / Chrome native-host / Linux Computer Use resource staging.
+- A small Python runtime is bundled only to satisfy launcher internals inside the Flatpak sandbox.
+- The launcher uses `zypak-wrapper` from the Electron BaseApp and skips host URL-scheme registration.
+
+If the required Flatpak refs are already present, skip dependency installation with `FLATPAK_INSTALL_DEPS=0 make flatpak`. To use a different remote name, set `FLATPAK_DEPS_REMOTE=your-remote-name`.
+
+Flatpak packaging has four maintainer modes:
+
+- `make flatpak` is the normal local artifact build mode. It resolves Flatpak dependency metadata into `dist/flatpak/generated/`, snapshots the current checkout into a local source archive under `dist/flatpak/`, renders a temporary manifest for `flatpak-builder`, and must not mutate checked-in pins or generated source files.
+- `make flatpak-manifest-flathub` is the Flathub submission manifest mode. It renders `packaging/flatpak/io.github.ilysenko.codex_desktop_linux.json` with `FLATPAK_FLATHUB_MODE=1` and `FLATPAK_RESOLVE_DEPS=0`, so the manifest uses checked-in pins plus a remote, immutable source instead of a local `dir` source or local tarball.
+- `make flatpak-check` is the consistency-check mode. It verifies the checked-in Flatpak pins, source manifests, lockfiles, and rendered manifest are current without building a bundle. CI runs this before `make flatpak`.
+- `make flatpak-refresh-pins` is the refresh mode maintainers should run before committing dependency updates. It is the only Make target intended to update checked-in Flatpak pins and generated files, and it reserves the resolver's `--write-pins` mode for that workflow.
+
+
+Local artifact build mode and Flathub submission mode intentionally use different source declarations:
+
+```bash
+# Local artifact build: generated manifest points at a tarball snapshot of this checkout.
+make flatpak
+
+# Flathub git source: remote repository plus immutable commit.
+CODEX_FLATPAK_SOURCE_KIND=git \
+CODEX_FLATPAK_SOURCE_URL=https://github.com/<owner>/<repo>.git \
+CODEX_FLATPAK_SOURCE_COMMIT=<full-commit-sha> \
+make flatpak-manifest-flathub
+
+# Flathub archive source: remote archive URL plus sha256.
+CODEX_FLATPAK_SOURCE_KIND=archive \
+CODEX_FLATPAK_SOURCE_URL=https://github.com/<owner>/<repo>/archive/<commit>.tar.gz \
+CODEX_FLATPAK_SOURCE_SHA256=<archive-sha256> \
+make flatpak-manifest-flathub
+```
+
+`FLATPAK_FLATHUB_MODE=1` rejects local `dir` sources, `CODEX_FLATPAK_SOURCE_DIR`, and local archive paths such as `CODEX_FLATPAK_SOURCE_ARCHIVE_PATH`. This guard prevents accidentally submitting a manifest that only works on the maintainer's machine. Remote archive sources must include `CODEX_FLATPAK_SOURCE_SHA256`; git sources must include `CODEX_FLATPAK_SOURCE_COMMIT`.
+
+When you change pinned npm dependencies or other Flatpak dependency metadata before a commit, refresh and verify the checked-in files with:
+
+```bash
+make flatpak-refresh-pins
+make flatpak-check
+```
+
+The resolver keeps dynamic network/probing work outside the Flatpak build sandbox. Use `FLATPAK_RESOLVE_DOWNLOAD_DMG=1` to allow refresh mode to download and hash the current upstream DMG when no local `Codex.dmg` is available, and `FLATPAK_RESOLVE_DOWNLOAD_BINARIES=1` when a detected Electron version change requires refreshing pinned Electron archive/header hashes. Resolved tool strategy currently controls runtime Python and build-time 7z reuse, with bundled fallbacks retained for both.
+
+For a real Flathub submission, keep the checked-in Flatpak files here, render the manifest with `make flatpak-manifest-flathub`, review the resulting remote pinned source, and complete a normal Flathub policy/trademark review. `scripts/build-flatpak.sh` still uses a local tarball snapshot only for local artifact builds.
 
 ## Electron Mirrors
 
@@ -202,6 +278,7 @@ make deb
 make rpm
 make pacman
 make appimage
+make flatpak
 make package
 make install
 make service-enable

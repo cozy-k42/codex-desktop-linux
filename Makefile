@@ -60,7 +60,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage flatpak flatpak-manifest-flathub flatpak-check flatpak-refresh-pins package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nCodex Desktop Linux Make Targets\n\n'
@@ -85,6 +85,10 @@ help:
 	@printf '  %-18s %s\n' "make rpm" "Build the RPM package into dist/ (Fedora/openSUSE)"
 	@printf '  %-18s %s\n' "make pacman" "Build the pacman package into dist/ (Arch)"
 	@printf '  %-18s %s\n' "make appimage" "Build the AppImage into dist/ (local self-build)"
+	@printf '  %-18s %s\n' "make flatpak" "Build the Flatpak bundle into dist/ using generated metadata"
+	@printf '  %-18s %s\n' "make flatpak-manifest-flathub" "Render a Flathub manifest with a remote pinned source"
+	@printf '  %-18s %s\n' "make flatpak-check" "Check checked-in Flatpak pins/generated files"
+	@printf '  %-18s %s\n' "make flatpak-refresh-pins" "Refresh checked-in Flatpak pins/generated files"
 	@printf '  %-18s %s\n' "make package" "Build native package (auto-detects deb, rpm, or pacman)"
 	@printf '  %-18s %s\n' "make install" "Install the latest generated native package"
 	@printf '  %-18s %s\n' "make service-enable" "Enable and start codex-update-manager.service for the current user"
@@ -103,6 +107,9 @@ help:
 	@printf '  %-18s %s\n' "MAX_BUILD_THREADS=8" "Set supported build jobs/compression threads (default: 0, tool/user defaults)"
 	@printf '  %-18s %s\n' "RPM_BINARY_PAYLOAD=..." "Advanced RPM payload flags override (default follows MAX_BUILD_THREADS)"
 	@printf '  %-18s %s\n' "APPIMAGETOOL=..." "Override the appimagetool executable for make appimage"
+	@printf '  %-18s %s\n' "FLATPAK_BUNDLE_PATH=..." "Override the generated .flatpak path for make flatpak"
+	@printf '  %-18s %s\n' "FLATPAK_INSTALL_DEPS=0" "Skip Flatpak runtime installs when the SDK/runtime/BaseApp are already present"
+	@printf '  %-18s %s\n' "FLATPAK_DEPS_REMOTE=..." "Override the Flatpak remote used to install build dependencies (default: flathub)"
 	@printf '  %-18s %s\n' "DEB=/path/file.deb" "Override the .deb used by make install"
 	@printf '  %-18s %s\n' "RPM=/path/file.rpm" "Override the .rpm used by make install"
 	@printf '  %-18s %s\n' "PKG=/path/file.pkg.tar.zst" "Override the pacman package used by make install"
@@ -127,6 +134,10 @@ help:
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make rpm"
 	@printf '  %s\n' "make pacman PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make appimage PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
+	@printf '  %s\n' "make flatpak-check"
+	@printf '  %s\n' "make flatpak"
+	@printf '  %s\n' "make flatpak-refresh-pins"
+	@printf '  %s\n' "FLATPAK_INSTALL_DEPS=0 make flatpak"
 	@printf '  %s\n' "make install"
 	@printf '  %s\n\n' "make service-enable"
 
@@ -245,6 +256,22 @@ pacman: maybe-build-updater
 appimage:
 	@echo "[make] Building AppImage"
 	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" PACKAGE_VERSION="$(or $(PACKAGE_VERSION),)" ./scripts/build-appimage.sh
+
+flatpak:
+	@echo "[make] Building Flatpak bundle"
+	MAX_BUILD_THREADS="$(MAX_BUILD_THREADS)" FLATPAK_BUNDLE_PATH="$(or $(FLATPAK_BUNDLE_PATH),)" ./scripts/build-flatpak.sh
+
+flatpak-manifest-flathub:
+	@echo "[make] Rendering Flathub Flatpak manifest"
+	FLATPAK_FLATHUB_MODE=1 FLATPAK_RESOLVE_DEPS=0 FLATPAK_MANIFEST_PATH="$(or $(FLATPAK_MANIFEST_PATH),packaging/flatpak/io.github.ilysenko.codex_desktop_linux.json)" ./scripts/build-flatpak.sh --manifest-only
+
+flatpak-check:
+	@echo "[make] Checking Flatpak pins and generated files"
+	node scripts/flatpak/check-flatpak-deps.mjs
+
+flatpak-refresh-pins:
+	@echo "[make] Refreshing checked-in Flatpak pins and generated files"
+	node scripts/flatpak/resolve-flatpak-deps.mjs --write-pins
 
 package: maybe-build-updater
 	@echo "[make] Building native package (auto-detecting distro)"

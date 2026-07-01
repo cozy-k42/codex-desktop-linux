@@ -1,0 +1,9 @@
+{
+  "name": "codex-desktop-flatpak-tools",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@vscode/ripgrep": "latest",
+    "dugite": "latest"
+  }
+}
